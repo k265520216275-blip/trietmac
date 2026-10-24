@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ứng dụng ôn thi trắc nghiệm – GitHub Pages + Google Sheets">
+  <title>Ôn thi trắc nghiệm</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%234f46e5%22/><text x=%2250%22 y=%2270%22 font-size=%2260%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial%22>Q</text></svg>">
+  <!-- Tailwind CSS (Play CDN) + Vue 3 (global build, phiên bản cố định) -->
+  <script src="https://cdn.tailwindcss.com/3.4.10"></script>
+  <script src="https://unpkg.com/vue@3.4.38/dist/vue.global.prod.js"></script>
+  <style>
+    [v-cloak] { display: none; }
+    body { -webkit-tap-highlight-color: transparent; }
+    .fade-enter-active, .fade-leave-active { transition: opacity .2s; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased">
+<div id="app" v-cloak class="min-h-screen flex flex-col">
+
+  <!-- ============================ HEADER ============================ -->
+  <header class="sticky top-0 z-30 bg-white/90 backdrop-blur border-b border-slate-200">
+    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2 min-w-0">
+        <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white grid place-items-center font-bold shrink-0">Q</div>
+        <h1 class="font-semibold truncate">{{ appTitle }}</h1>
+      </div>
+      <!-- Đồng hồ đếm ngược (chỉ hiện khi đang làm bài) -->
+      <div v-if="screen==='exam'" class="flex items-center gap-2">
+        <span class="hidden sm:inline text-xs px-2 py-1 rounded-full"
+              :class="exam.mode==='exam' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'">
+          {{ exam.mode==='exam' ? 'Thi thật' : 'Luyện tập' }}
+        </span>
+        <div class="font-mono text-lg font-bold px-3 py-1 rounded-lg tabular-nums"
+             :class="remaining <= 60 ? 'bg-rose-600 text-white animate-pulse' : remaining <= 300 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100'">
+          ⏱ {{ fmtTime(remaining) }}
+        </div>
+      </div>
+      <div v-else class="text-sm text-slate-500 truncate max-w-[45%]">{{ user }}</div>
+    </div>
+  </header>
+
+  <main class="flex-1 w-full max-w-5xl mx-auto px-4 py-6">
+
+    <!-- ============================ LOADING (lần đầu) ============================ -->
+    <div v-if="screen==='config'" class="max-w-xl mx-auto bg-amber-50 border border-amber-200 rounded-2xl p-6 text-amber-900">
+      <h2 class="font-bold text-lg">Chưa cấu hình API</h2>
+      <p class="mt-2 text-sm">Mở file <code class="bg-white px-1 rounded">js/config.js</code> và dán URL Web App của Google Apps Script (dạng <code class="bg-white px-1 rounded">https://script.google.com/macros/s/.../exec</code>) vào <code class="bg-white px-1 rounded">API_URL</code>, rồi commit lên GitHub.</p>
+    </div>
+
+    <div v-else-if="screen==='boot'" class="py-24 text-center text-slate-500">
+      <div class="mx-auto w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+      <p class="mt-4">Đang tải ngân hàng câu hỏi…</p>
+    </div>
+
+    <!-- ============================ HOME / SETUP ============================ -->
+    <section v-else-if="screen==='home'" class="grid lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6 space-y-6">
+        <div>
+          <h2 class="text-xl font-bold">Thiết lập bài làm</h2>
+          <p class="text-sm text-slate-500">Ngân hàng có {{ total }} câu hỏi.</p>
+        </div>
+
+        <!-- Người làm bài -->
+        <div>
+          <label class="block text-sm font-medium mb-1">Email / Họ tên <span class="text-rose-600">*</span></label>
+          <input v-model.trim="user" type="text" placeholder="vd: sv001@tnut.edu.vn"
+                 class="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 ">
+        </div>
+
+        <!-- Chủ đề -->
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-medium">Chủ đề</label>
+            <button class="text-xs text-indigo-600 hover:underline" @click="toggleAllTopics">
+              {{ selectedTopics.length===topics.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả' }}
+            </button>
+          </div>
+          <div class="grid gap-2">
+            <label v-for="t in topics" :key="t.name"
+                   class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition"
+                   :class="selectedTopics.includes(t.name) ? 'border-indigo-500 bg-indigo-50' : 'border-slate-200 hover:bg-slate-50'">
+              <input type="checkbox" class="w-4 h-4 accent-indigo-600" :value="t.name" v-model="selectedTopics">
+              <span class="flex-1 text-sm">{{ t.name }}</span>
+              <span class="text-xs text-slate-500 shrink-0">{{ t.count }} câu</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Số câu + thời gian -->
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">Số câu hỏi (tối đa {{ poolSize }})</label>
+            <input v-model.number="cfg.count" type="number" min="1" :max="poolSize"
+                   class="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <div class="flex gap-2 mt-2">
+              <button v-for="n in [10,25,50]" :key="n" @click="cfg.count=n"
+                      class="text-xs px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200">{{ n }}</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Thời gian (phút)</label>
+            <input v-model.number="cfg.minutes" type="number" min="1" max="300"
+                   class="w-full rounded-xl border border-slate-300 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            <div class="flex gap-2 mt-2">
+              <button v-for="n in [15,30,60]" :key="n" @click="cfg.minutes=n"
+                      class="text-xs px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200">{{ n }}'</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chế độ -->
+        <div>
+          <label class="block text-sm font-medium mb-2">Chế độ chấm điểm</label>
+          <div class="grid sm:grid-cols-2 gap-3">
+            <button @click="cfg.mode='exam'" class="text-left p-4 rounded-xl border-2 transition"
+                    :class="cfg.mode==='exam' ? 'border-rose-500 bg-rose-50' : 'border-slate-200 hover:border-slate-300'">
+              <div class="font-semibold">🎯 Thi thật</div>
+              <div class="text-xs text-slate-500 mt-1">Chấm sau khi nộp bài. Đáp án không được gửi về trình duyệt.</div>
+            </button>
+            <button @click="cfg.mode='practice'" class="text-left p-4 rounded-xl border-2 transition"
+                    :class="cfg.mode==='practice' ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 hover:border-slate-300'">
+              <div class="font-semibold">📘 Luyện tập</div>
+              <div class="text-xs text-slate-500 mt-1">Chấm ngay từng câu, hiện giải thích tức thì.</div>
+            </button>
+          </div>
+        </div>
+
+        <button @click="start()" :disabled="busy || !canStart"
+                class="w-full py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition">
+          {{ busy ? 'Đang tạo đề…' : 'Bắt đầu làm bài →' }}
+        </button>
+      </div>
+
+      <!-- Lịch sử -->
+      <aside class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 h-fit">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold">Lịch sử làm bài</h3>
+          <button class="text-xs text-indigo-600 hover:underline disabled:opacity-40" :disabled="!user || historyLoading" @click="loadHistory">
+            {{ historyLoading ? 'Đang tải…' : 'Làm mới' }}
+          </button>
+        </div>
+        <p v-if="!user" class="text-sm text-slate-500">Nhập email để xem lịch sử.</p>
+        <p v-else-if="!history.length && !historyLoading" class="text-sm text-slate-500">Chưa có bài làm nào.</p>
+        <ul class="space-y-2">
+          <li v-for="(h,i) in history" :key="i" class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-slate-500">{{ fmtDate(h.timestamp) }}</span>
+              <span class="font-bold" :class="scoreColor(h.score10)">{{ h.score10.toFixed(2) }}</span>
+            </div>
+            <div class="flex items-center justify-between mt-1">
+              <span class="text-xs">Đúng {{ h.correct }}/{{ h.total }}</span>
+              <button v-if="h.wrongIds.length" @click="retry(h.wrongIds)" :disabled="busy"
+                      class="text-xs text-indigo-600 hover:underline">Ôn {{ h.wrongIds.length }} câu sai</button>
+            </div>
+          </li>
+        </ul>
+      </aside>
+    </section>
+
+    <!-- ============================ EXAM ============================ -->
+    <section v-else-if="screen==='exam' && current" class="grid lg:grid-cols-[1fr_280px] gap-6">
+      <div class="space-y-4">
+        <!-- Tiến độ -->
+        <div>
+          <div class="flex justify-between text-xs text-slate-500 mb-1">
+            <span>Câu {{ idx+1 }}/{{ exam.questions.length }}</span>
+            <span>Đã làm {{ answeredCount }}/{{ exam.questions.length }}</span>
+          </div>
+          <div class="h-2 rounded-full bg-slate-200 overflow-hidden">
+            <div class="h-full bg-indigo-600 transition-all" :style="{width: (answeredCount/exam.questions.length*100)+'%'}"></div>
+          </div>
+        </div>
+
+        <!-- Câu hỏi -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-6">
+          <div class="flex items-start justify-between gap-3 mb-3">
+            <span class="text-xs px-2 py-1 rounded-md bg-slate-100 text-slate-600">{{ current.topic }}</span>
+            <button @click="toggleFlag(current.id)" class="text-xs px-2 py-1 rounded-md border shrink-0"
+                    :class="flags[current.id] ? 'bg-amber-100 border-amber-300 text-amber-800' : 'border-slate-200 text-slate-500'">
+              {{ flags[current.id] ? '🚩 Đã đánh dấu' : '🏳 Đánh dấu' }}
+            </button>
+          </div>
+          <h2 class="text-base sm:text-lg font-semibold leading-relaxed whitespace-pre-line">
+            <span class="text-indigo-600">Câu {{ idx+1 }}.</span> {{ current.question }}
+          </h2>
+
+          <div class="mt-5 grid gap-3">
+            <button v-for="(opt,k) in current.options" :key="k" @click="choose(L[k])"
+                    :disabled="isLocked(current)"
+                    class="flex items-start gap-3 text-left p-3.5 rounded-xl border-2 transition"
+                    :class="optionClass(current, L[k])">
+              <span class="w-7 h-7 shrink-0 rounded-full grid place-items-center text-sm font-bold border"
+                    :class="answers[current.id]===L[k] ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300'">{{ L[k] }}</span>
+              <span class="pt-0.5">{{ opt }}</span>
+            </button>
+          </div>
+
+          <!-- Phản hồi tức thì (Luyện tập) -->
+          <transition name="fade">
+            <div v-if="exam.mode==='practice' && answers[current.id]"
+                 class="mt-5 p-4 rounded-xl text-sm"
+                 :class="answers[current.id]===current.correct ? 'bg-emerald-50 text-emerald-800' : 'bg-rose-50 text-rose-800'">
+              <div class="font-semibold">
+                {{ answers[current.id]===current.correct ? '✓ Chính xác!' : '✗ Chưa đúng — đáp án đúng là ' + current.correct }}
+              </div>
+              <p v-if="current.explanation" class="mt-1 text-slate-700 whitespace-pre-line">{{ current.explanation }}</p>
+            </div>
+          </transition>
+        </div>
+
+        <!-- Điều hướng -->
+        <div class="flex items-center gap-3">
+          <button @click="go(idx-1)" :disabled="idx===0"
+                  class="px-4 py-2.5 rounded-xl border border-slate-300 bg-white disabled:opacity-40">← Trước</button>
+          <button v-if="idx < exam.questions.length-1" @click="go(idx+1)"
+                  class="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-indigo-600 text-white font-medium">Tiếp →</button>
+          <button v-else @click="confirmSubmit=true"
+                  class="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 text-white font-medium">Nộp bài</button>
+          <span class="hidden sm:inline ml-auto text-xs text-slate-400">Phím tắt: A–D chọn, ←/→ chuyển câu</span>
+        </div>
+      </div>
+
+      <!-- Bảng câu hỏi -->
+      <aside class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 h-fit lg:sticky lg:top-20">
+        <h3 class="text-sm font-semibold mb-3">Danh sách câu</h3>
+        <div class="grid grid-cols-8 sm:grid-cols-10 lg:grid-cols-6 gap-1.5 max-h-72 overflow-y-auto">
+          <button v-for="(q,i) in exam.questions" :key="q.id" @click="go(i)"
+                  class="relative aspect-square rounded-lg text-xs font-medium border transition"
+                  :class="navClass(q,i)">
+            {{ i+1 }}
+            <span v-if="flags[q.id]" class="absolute -top-1 -right-1 text-[10px]">🚩</span>
+          </button>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-3 text-[11px] text-slate-500">
+          <span class="flex items-center gap-1"><i class="w-3 h-3 rounded bg-indigo-600"></i>Đã làm</span>
+          <span class="flex items-center gap-1"><i class="w-3 h-3 rounded border border-slate-300"></i>Chưa làm</span>
+        </div>
+        <button @click="confirmSubmit=true" class="mt-4 w-full py-2.5 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700">
+          Nộp bài
+        </button>
+      </aside>
+    </section>
+
+    <!-- ============================ RESULT ============================ -->
+    <section v-else-if="screen==='result' && result" class="space-y-6">
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 text-center">
+        <p class="text-sm text-slate-500">Điểm của bạn (thang 10)</p>
+        <div class="text-6xl font-extrabold my-2" :class="scoreColor(result.score10)">{{ result.score10.toFixed(2) }}</div>
+        <p class="text-slate-600">Đúng <b>{{ result.correct }}</b>/{{ result.total }} câu · Thời gian {{ fmtTime(result.elapsedSec) }}</p>
+        <p v-if="result.late" class="mt-2 text-sm text-rose-600">Bài nộp quá thời gian cho phép — không được tính điểm.</p>
+        <div class="mt-5 grid grid-cols-3 gap-3 max-w-md mx-auto text-sm">
+          <div class="p-3 rounded-xl bg-emerald-50"><div class="text-xl font-bold text-emerald-700">{{ result.correct }}</div>Đúng</div>
+          <div class="p-3 rounded-xl bg-rose-50"><div class="text-xl font-bold text-rose-700">{{ wrongCount }}</div>Sai</div>
+          <div class="p-3 rounded-xl bg-slate-100"><div class="text-xl font-bold">{{ skippedCount }}</div>Bỏ trống</div>
+        </div>
+        <div class="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+          <button v-if="wrongIds.length" @click="retry(wrongIds)" :disabled="busy"
+                  class="px-5 py-2.5 rounded-xl bg-indigo-600 text-white font-medium disabled:opacity-50">Luyện lại {{ wrongIds.length }} câu sai</button>
+          <button @click="goHome" class="px-5 py-2.5 rounded-xl border border-slate-300 bg-white font-medium">Về trang chủ</button>
+        </div>
+      </div>
+
+      <!-- Xem lại -->
+      <div>
+        <div class="flex flex-wrap items-center gap-2 mb-3">
+          <h3 class="font-semibold mr-auto">Xem lại bài làm</h3>
+          <button v-for="f in reviewFilters" :key="f.key" @click="reviewFilter=f.key"
+                  class="text-sm px-3 py-1.5 rounded-lg border"
+                  :class="reviewFilter===f.key ? 'bg-slate-800 text-white border-slate-800' : 'bg-white border-slate-200'">
+            {{ f.label }}
+          </button>
+        </div>
+        <p v-if="!reviewList.length" class="text-center text-slate-500 py-8">Không có câu nào. 🎉</p>
+        <div class="space-y-4">
+          <article v-for="d in reviewList" :key="d.id" class="bg-white rounded-2xl border p-5"
+                   :class="d.isCorrect ? 'border-emerald-200' : 'border-rose-200'">
+            <div class="flex items-start gap-2">
+              <span class="shrink-0 text-xs font-bold px-2 py-1 rounded-md"
+                    :class="d.isCorrect ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'">
+                Câu {{ d.no }} · {{ d.isCorrect ? 'Đúng' : (d.chosen ? 'Sai' : 'Bỏ trống') }}
+              </span>
+              <span class="text-[11px] text-slate-400 ml-auto">{{ d.id }}</span>
+            </div>
+            <p class="mt-3 font-medium whitespace-pre-line">{{ d.question }}</p>
+            <ul class="mt-3 grid gap-2 text-sm">
+              <li v-for="(opt,k) in d.options" :key="k" class="flex gap-2 p-2.5 rounded-lg"
+                  :class="L[k]===d.correct ? 'bg-emerald-50 text-emerald-900 font-medium'
+                         : L[k]===d.chosen ? 'bg-rose-50 text-rose-900 line-through decoration-rose-400' : 'text-slate-600'">
+                <b class="w-5">{{ L[k] }}.</b><span class="flex-1">{{ opt }}</span>
+                <span v-if="L[k]===d.correct">✓</span><span v-else-if="L[k]===d.chosen">✗</span>
+              </li>
+            </ul>
+            <div v-if="d.explanation" class="mt-3 p-3 rounded-lg bg-amber-50 text-sm text-amber-900">
+              <b>Giải thích:</b> <span class="whitespace-pre-line">{{ d.explanation }}</span>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================ MODAL NỘP BÀI ============================ -->
+  <transition name="fade">
+    <div v-if="confirmSubmit" class="fixed inset-0 z-40 bg-slate-900/50 grid place-items-center p-4" @click.self="confirmSubmit=false">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+        <h3 class="text-lg font-bold">Nộp bài?</h3>
+        <p class="mt-2 text-sm text-slate-600">
+          Bạn đã làm {{ answeredCount }}/{{ exam.questions.length }} câu.
+          <span v-if="unanswered" class="text-rose-600 font-medium">Còn {{ unanswered }} câu chưa trả lời.</span>
+        </p>
+        <div class="mt-5 flex gap-3">
+          <button @click="confirmSubmit=false" class="flex-1 py-2.5 rounded-xl border border-slate-300">Làm tiếp</button>
+          <button @click="submit(false)" :disabled="busy" class="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-50">
+            {{ busy ? 'Đang chấm…' : 'Nộp bài' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </transition>
+
+  <!-- ============================ TOAST ============================ -->
+  <transition name="fade">
+    <div v-if="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-[92vw] px-4 py-3 rounded-xl shadow-lg text-sm text-white"
+         :class="toast.type==='error' ? 'bg-rose-600' : 'bg-slate-800'">{{ toast.msg }}</div>
+  </transition>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
